@@ -21,7 +21,7 @@ app.post('/resposta/:id', (req, res) => {
   const id = parseInt(req.params.id);
   const resposta = req.body.resposta; // 'aprovado' ou 'negado'
   const item = solicitacoes.find(s => s.id === id);
-  if (item) begin
+  if (item) {
     item.status = resposta;
     res.json({ message: 'Status atualizado' });
   } else {
