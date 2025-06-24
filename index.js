@@ -73,14 +73,16 @@ app.post('/admin/aprovar', (req, res) => {
   if (!device_id || !token || !erp_nome || !data_validade)
     return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
 
-  db.run(`INSERT OR REPLACE INTO licencas (device_id, token, erp_nome, data_validade, autorizado) VALUES (?, ?, ?, ?, 1)`,
+  db.run(
+    `INSERT OR REPLACE INTO licencas (device_id, token, erp_nome, data_validade, autorizado)
+     VALUES (?, ?, ?, ?, 1)`,
     [device_id, token, erp_nome, data_validade],
-    function (err) {
+    function(err) {
       if (err) return res.status(500).json({ error: err.message });
-
       db.run(`DELETE FROM solicitacoes WHERE device_id = ?`, [device_id]);
       res.json({ status: 'Licença aprovada e registrada' });
-    });
+    }
+  );
 });
 
 // Rota: Admin - Ver licenças ativas
