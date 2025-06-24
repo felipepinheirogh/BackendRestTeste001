@@ -32,9 +32,35 @@ app.post('/solicitacao', (req, res) => {
   const { device_id } = req.body;
   if (!device_id) return res.status(400).json({ error: 'device_id ausente' });
 
-  db.run(`INSERT OR IGNORE INTO solicitacoes (device_id, data) VALUES (?, datetime('now'))`, [device_id], function (err) {
+  db.get(`SELECT * FROM licencas WHERE device_id = ?`, [device_id], (err, licenca) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ status: 'Solicitação registrada' });
+
+    if (licenca) {
+      if (licenca.autorizado === 0) return res.json({ status: 'bloqueado' });
+
+      const validade = new Date(licenca.data_validade);
+      const hoje = new Date();
+      const dias = Math.floor((validade - hoje) / (1000 * 60 * 60 * 24));
+
+      return res.json({
+        status: 'aprovado',
+        token: licenca.token,
+        erp_nome: licenca.erp_nome,
+        data_validade: licenca.data_validade,
+        dias_restantes: dias
+      });
+    }
+
+    db.get(`SELECT * FROM solicitacoes WHERE device_id = ?`, [device_id], (err, sol) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      if (sol) return res.json({ status: 'pendente' });
+
+      db.run(`INSERT INTO solicitacoes (device_id, data) VALUES (?, datetime('now'))`, [device_id], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ status: 'pendente' });
+      });
+    });
   });
 });
 
