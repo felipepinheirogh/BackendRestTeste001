@@ -2,13 +2,14 @@ const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const bodyParser = require('body-parser');
 const cors = require('cors');
+
 const app = express();
 const db = new sqlite3.Database('./licencas.db');
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Criação das tabelas
+// Criação das tabelas (se ainda não existirem)
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS solicitacoes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +27,7 @@ db.serialize(() => {
   )`);
 });
 
-// Rota: Solicitar nova licença
+// 🔹 Solicitação de nova licença (cliente)
 app.post('/solicitacao', (req, res) => {
   const { device_id } = req.body;
   if (!device_id) return res.status(400).json({ error: 'device_id ausente' });
@@ -37,7 +38,7 @@ app.post('/solicitacao', (req, res) => {
   });
 });
 
-// Rota: Verificar token de licença
+// 🔹 Verificação de licença (cliente)
 app.post('/licenca/verificar', (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ error: 'token ausente' });
@@ -59,7 +60,7 @@ app.post('/licenca/verificar', (req, res) => {
   });
 });
 
-// Rota: Admin - Ver solicitações pendentes
+// 🔹 Ver solicitações pendentes (admin)
 app.get('/admin/solicitacoes', (req, res) => {
   db.all(`SELECT * FROM solicitacoes`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -67,43 +68,73 @@ app.get('/admin/solicitacoes', (req, res) => {
   });
 });
 
-// Rota: Admin - Aprovar solicitação
+// 🔹 Aprovar uma solicitação (admin)
 app.post('/admin/aprovar', (req, res) => {
-  const { device_id, token, erp_nome, data_validade } = req.body;
-  if (!device_id || !token || !erp_nome || !data_validade)
+  const { device_id, token, erp_nome, dias } = req.body;
+  if (!device_id || !token || !erp_nome || !dias)
     return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
+
+  const data_validade = new Date();
+  data_validade.setDate(data_validade.getDate() + parseInt(dias));
+  const validadeStr = data_validade.toISOString().split('T')[0];
 
   db.run(
     `INSERT OR REPLACE INTO licencas (device_id, token, erp_nome, data_validade, autorizado)
      VALUES (?, ?, ?, ?, 1)`,
-    [device_id, token, erp_nome, data_validade],
-    function(err) {
+    [device_id, token, erp_nome, validadeStr],
+    function (err) {
       if (err) return res.status(500).json({ error: err.message });
       db.run(`DELETE FROM solicitacoes WHERE device_id = ?`, [device_id]);
-      res.json({ status: 'Licença aprovada e registrada' });
+      res.json({ status: 'Licença aprovada e registrada', validade: validadeStr });
     }
   );
 });
 
-// Rota: Admin - Ver licenças ativas
+// 🔹 Listar todas as licenças (ativas/inativas) (admin)
 app.get('/admin/licencas', (req, res) => {
-  db.all(`SELECT * FROM licencas WHERE autorizado = 1`, [], (err, rows) => {
+  const status = req.query.status;
+  let sql = `SELECT * FROM licencas`;
+
+  if (status === 'ativo') sql += ` WHERE autorizado = 1`;
+  else if (status === 'inativo') sql += ` WHERE autorizado = 0`;
+
+  db.all(sql, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
-// Rota: Admin - Bloquear licença
+// 🔹 Bloquear licença (admin)
 app.post('/admin/bloquear', (req, res) => {
-  const { token } = req.body;
-  if (!token) return res.status(400).json({ error: 'token ausente' });
+  const { token, device_id } = req.body;
+  if (!token && !device_id)
+    return res.status(400).json({ error: 'Informe token ou device_id' });
 
-  db.run(`UPDATE licencas SET autorizado = 0 WHERE token = ?`, [token], function (err) {
+  const whereClause = token ? `token = ?` : `device_id = ?`;
+  const value = token || device_id;
+
+  db.run(`UPDATE licencas SET autorizado = 0 WHERE ${whereClause}`, [value], function (err) {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ status: 'Licença bloqueada' });
+    res.json({ status: 'Licença bloqueada com sucesso' });
   });
 });
 
+// 🔹 Reativar licença (admin)
+app.post('/admin/reativar', (req, res) => {
+  const { token, device_id } = req.body;
+  if (!token && !device_id)
+    return res.status(400).json({ error: 'Informe token ou device_id' });
+
+  const whereClause = token ? `token = ?` : `device_id = ?`;
+  const value = token || device_id;
+
+  db.run(`UPDATE licencas SET autorizado = 1 WHERE ${whereClause}`, [value], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ status: 'Licença reativada com sucesso' });
+  });
+});
+
+// 🔸 Inicialização
 app.listen(3000, () => {
   console.log('Servidor de licenciamento rodando na porta 3000');
 });
