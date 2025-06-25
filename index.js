@@ -1,47 +1,43 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const fetch = require('node-fetch');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 
 const app = express();
-const db = new sqlite3.Database('./licencas.db');
-
 app.use(cors());
 app.use(bodyParser.json());
 
-// Criação das tabelas (se ainda não existirem)
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS solicitacoes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT UNIQUE,
-    data TEXT
-  )`);
+const SUPABASE_URL = 'https://rigjmzuqlpzxbvsyrsqo.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpZ2ptenVxbHB6eGJ2c3lyc3FvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA4OTAxMjksImV4cCI6MjA2NjQ2NjEyOX0.MdbKZkdinux2ZjXdXC3K-7DlJumWR2K1-u1y4maaOM0';
 
-  db.run(`CREATE TABLE IF NOT EXISTS licencas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT,
-    token TEXT UNIQUE,
-    erp_nome TEXT,
-    data_validade TEXT,
-    autorizado INTEGER DEFAULT 1
-  )`);
-});
+async function supabaseRequest(method, endpoint, body = null) {
+  const options = {
+    method,
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  };
+  if (body) options.body = JSON.stringify(body);
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, options);
+  const data = await res.json();
+  return { status: res.status, data };
+}
 
 // 🔹 Solicitação de nova licença (cliente)
-app.post('/solicitacao', (req, res) => {
+app.post('/solicitacao', async (req, res) => {
   const { device_id } = req.body;
   if (!device_id) return res.status(400).json({ error: 'device_id ausente' });
 
-  db.get(`SELECT * FROM licencas WHERE device_id = ?`, [device_id], (err, licenca) => {
-    if (err) return res.status(500).json({ error: err.message });
-
+  try {
+    const { data: licencas } = await supabaseRequest('GET', `licencas?device_id=eq.${device_id}&select=*`);
+    const licenca = licencas[0];
     if (licenca) {
-      if (licenca.autorizado === 0) return res.json({ status: 'bloqueado' });
-
+      if (!licenca.autorizado) return res.json({ status: 'bloqueado' });
       const validade = new Date(licenca.data_validade);
       const hoje = new Date();
       const dias = Math.floor((validade - hoje) / (1000 * 60 * 60 * 24));
-
       return res.json({
         status: 'aprovado',
         token: licenca.token,
@@ -51,51 +47,52 @@ app.post('/solicitacao', (req, res) => {
       });
     }
 
-    db.get(`SELECT * FROM solicitacoes WHERE device_id = ?`, [device_id], (err, sol) => {
-      if (err) return res.status(500).json({ error: err.message });
+    const { data: pendente } = await supabaseRequest('GET', `solicitacoes?device_id=eq.${device_id}&select=*`);
+    if (pendente.length > 0) return res.json({ status: 'pendente' });
 
-      if (sol) return res.json({ status: 'pendente' });
-
-      db.run(`INSERT INTO solicitacoes (device_id, data) VALUES (?, datetime('now'))`, [device_id], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ status: 'pendente' });
-      });
+    await supabaseRequest('POST', 'solicitacoes', {
+      device_id,
+      data: new Date().toISOString()
     });
-  });
+    return res.json({ status: 'pendente' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 🔹 Verificação de licença (cliente)
-app.post('/licenca/verificar', (req, res) => {
+app.post('/licenca/verificar', async (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ error: 'token ausente' });
-
-  db.get(`SELECT * FROM licencas WHERE token = ? AND autorizado = 1`, [token], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Licença inválida ou não autorizada' });
-
+  try {
+    const { data } = await supabaseRequest('GET', `licencas?token=eq.${token}&autorizado=eq.true&select=*`);
+    const licenca = data[0];
+    if (!licenca) return res.status(404).json({ error: 'Licença inválida ou não autorizada' });
     const hoje = new Date();
-    const validade = new Date(row.data_validade);
-    const diffMs = validade.getTime() - hoje.getTime();
-    const diasRestantes = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
+    const validade = new Date(licenca.data_validade);
+    const dias = Math.floor((validade - hoje) / (1000 * 60 * 60 * 24));
     res.json({
-      dias_restantes: diasRestantes,
-      data_validade: row.data_validade,
-      erp_nome: row.erp_nome
+      dias_restantes: dias,
+      data_validade: licenca.data_validade,
+      erp_nome: licenca.erp_nome
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 🔹 Ver solicitações pendentes (admin)
-app.get('/admin/solicitacoes', (req, res) => {
-  db.all(`SELECT * FROM solicitacoes`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+app.get('/admin/solicitacoes', async (req, res) => {
+  try {
+    const { data } = await supabaseRequest('GET', 'solicitacoes?select=*');
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 🔹 Aprovar uma solicitação (admin)
-app.post('/admin/aprovar', (req, res) => {
+app.post('/admin/aprovar', async (req, res) => {
   const { device_id, token, erp_nome, dias } = req.body;
   if (!device_id || !token || !erp_nome || !dias)
     return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
@@ -104,63 +101,65 @@ app.post('/admin/aprovar', (req, res) => {
   data_validade.setDate(data_validade.getDate() + parseInt(dias));
   const validadeStr = data_validade.toISOString().split('T')[0];
 
-  db.run(
-    `INSERT OR REPLACE INTO licencas (device_id, token, erp_nome, data_validade, autorizado)
-     VALUES (?, ?, ?, ?, 1)`,
-    [device_id, token, erp_nome, validadeStr],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      db.run(`DELETE FROM solicitacoes WHERE device_id = ?`, [device_id]);
-      res.json({ status: 'Licença aprovada e registrada', validade: validadeStr });
-    }
-  );
+  try {
+    await supabaseRequest('POST', 'licencas', {
+      device_id,
+      token,
+      erp_nome,
+      data_validade: validadeStr,
+      autorizado: true
+    });
+    await supabaseRequest('DELETE', `solicitacoes?device_id=eq.${device_id}`);
+    res.json({ status: 'Licença aprovada e registrada', validade: validadeStr });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 🔹 Listar todas as licenças (ativas/inativas) (admin)
-app.get('/admin/licencas', (req, res) => {
+// 🔹 Listar todas as licenças (admin)
+app.get('/admin/licencas', async (req, res) => {
   const status = req.query.status;
-  let sql = `SELECT * FROM licencas`;
+  let query = 'licencas?select=*';
+  if (status === 'ativo') query += '&autorizado=eq.true';
+  else if (status === 'inativo') query += '&autorizado=eq.false';
 
-  if (status === 'ativo') sql += ` WHERE autorizado = 1`;
-  else if (status === 'inativo') sql += ` WHERE autorizado = 0`;
-
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+  try {
+    const { data } = await supabaseRequest('GET', query);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 🔹 Bloquear licença (admin)
-app.post('/admin/bloquear', (req, res) => {
+app.post('/admin/bloquear', async (req, res) => {
   const { token, device_id } = req.body;
-  if (!token && !device_id)
-    return res.status(400).json({ error: 'Informe token ou device_id' });
+  if (!token && !device_id) return res.status(400).json({ error: 'Informe token ou device_id' });
 
-  const whereClause = token ? `token = ?` : `device_id = ?`;
-  const value = token || device_id;
-
-  db.run(`UPDATE licencas SET autorizado = 0 WHERE ${whereClause}`, [value], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
+  try {
+    await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: false });
     res.json({ status: 'Licença bloqueada com sucesso' });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 🔹 Reativar licença (admin)
-app.post('/admin/reativar', (req, res) => {
+app.post('/admin/reativar', async (req, res) => {
   const { token, device_id } = req.body;
-  if (!token && !device_id)
-    return res.status(400).json({ error: 'Informe token ou device_id' });
+  if (!token && !device_id) return res.status(400).json({ error: 'Informe token ou device_id' });
 
-  const whereClause = token ? `token = ?` : `device_id = ?`;
-  const value = token || device_id;
-
-  db.run(`UPDATE licencas SET autorizado = 1 WHERE ${whereClause}`, [value], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+  const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
+  try {
+    await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: true });
     res.json({ status: 'Licença reativada com sucesso' });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 🔸 Inicialização
+// Inicialização
 app.listen(3000, () => {
   console.log('Servidor de licenciamento rodando na porta 3000');
 });
