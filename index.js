@@ -8,7 +8,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const SUPABASE_URL = 'https://rigjmzuqlpzxbvsyrsqo.supabase.co';
-const SUPABASE_KEY = 'SUA_CHAVE_AQUI';
+const SUPABASE_KEY = 'SUA_CHAVE_AQUI'; // 🔒 Substitua pela sua chave real
 
 async function supabaseRequest(method, endpoint, body = null) {
   const options = {
@@ -65,7 +65,6 @@ app.post('/licenca/verificar', async (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ error: 'token ausente' });
   try {
-    // Aqui o filtro pode continuar com eq.true pois é na URL (filtro)
     const { data } = await supabaseRequest('GET', `licencas?token=eq.${token}&autorizado=eq.true&select=*`);
     const licenca = data[0];
     if (!licenca) return res.status(404).json({ error: 'Licença inválida ou não autorizada' });
@@ -103,7 +102,6 @@ app.post('/admin/aprovar', async (req, res) => {
   const validadeStr = data_validade.toISOString().split('T')[0];
 
   try {
-    // Aqui, enviar autorizado como número 1 (smallint)
     await supabaseRequest('POST', 'licencas', {
       device_id,
       token,
@@ -122,7 +120,7 @@ app.post('/admin/aprovar', async (req, res) => {
 app.get('/admin/licencas', async (req, res) => {
   const status = req.query.status;
   let query = 'licencas?select=*';
-  if (status === 'ativo') query += '&autorizado=eq.true'; // filtro URL pode ficar assim
+  if (status === 'ativo') query += '&autorizado=eq.true';
   else if (status === 'inativo') query += '&autorizado=eq.false';
 
   try {
@@ -140,7 +138,6 @@ app.post('/admin/bloquear', async (req, res) => {
 
   const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
   try {
-    // Aqui enviar 0 (smallint) no corpo
     await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: 0 });
     res.json({ status: 'Licença bloqueada com sucesso' });
   } catch (err) {
@@ -155,9 +152,39 @@ app.post('/admin/reativar', async (req, res) => {
 
   const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
   try {
-    // Aqui enviar 1 (smallint) no corpo
     await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: 1 });
     res.json({ status: 'Licença reativada com sucesso' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Excluir licença (admin)
+app.post('/admin/excluir-licenca', async (req, res) => {
+  const { token, device_id } = req.body;
+  if (!token && !device_id) return res.status(400).json({ error: 'Informe token ou device_id' });
+
+  const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
+  try {
+    await supabaseRequest('DELETE', `licencas?${filtro}`);
+    res.json({ status: 'Licença excluída com sucesso' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Excluir solicitação (admin)
+app.post('/admin/excluir-solicitacao', async (req, res) => {
+  const { device_id } = req.body;
+
+  try {
+    if (device_id) {
+      await supabaseRequest('DELETE', `solicitacoes?device_id=eq.${device_id}`);
+      res.json({ status: `Solicitação do device_id ${device_id} excluída` });
+    } else {
+      await supabaseRequest('DELETE', `solicitacoes`);
+      res.json({ status: 'Todas as solicitações pendentes foram excluídas' });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
