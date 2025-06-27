@@ -2,13 +2,13 @@ const express = require('express');
 const fetch = require('node-fetch');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const app = express();
 
+const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
 const SUPABASE_URL = 'https://rigjmzuqlpzxbvsyrsqo.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpZ2ptenVxbHB6eGJ2c3lyc3FvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA4OTAxMjksImV4cCI6MjA2NjQ2NjEyOX0.MdbKZkdinux2ZjXdXC3K-7DlJumWR2K1-u1y4maaOM0'; // 🔒 Sua chave real
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpZ2ptenVxbHB6eGJ2c3lyc3FvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA4OTAxMjksImV4cCI6MjA2NjQ2NjEyOX0.MdbKZkdinux2ZjXdXC3K-7DlJumWR2K1-u1y4maaOM0'; // 🔒 Substitua pela sua chave real
 
 async function supabaseRequest(method, endpoint, body = null) {
   const options = {
@@ -20,7 +20,6 @@ async function supabaseRequest(method, endpoint, body = null) {
     }
   };
   if (body) options.body = JSON.stringify(body);
-
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, options);
   const data = await res.json();
   return { status: res.status, data };
@@ -32,68 +31,50 @@ app.post('/solicitacao', async (req, res) => {
   if (!device_id) return res.status(400).json({ error: 'device_id ausente' });
 
   try {
-    const { data: licencas } = await supabaseRequest('GET', `licencas?device_id=eq.${device_id}&autorizado=eq.true&select=*,clientes(*)`);
+    const { data: licencas } = await supabaseRequest('GET', `licencas?device_id=eq.${device_id}&select=*`);
     const licenca = licencas[0];
-
     if (licenca) {
+      if (!licenca.autorizado) return res.json({ status: 'bloqueado' });
       const validade = new Date(licenca.data_validade);
       const hoje = new Date();
       const dias = Math.floor((validade - hoje) / (1000 * 60 * 60 * 24));
-
       return res.json({
         status: 'aprovado',
         token: licenca.token,
         erp_nome: licenca.erp_nome,
         data_validade: licenca.data_validade,
-        dias_restantes: dias,
-        payload: {
-          cliente_id: licenca.cliente_id,
-          nome_razao: licenca.clientes?.nome_razao,
-          telefone: licenca.clientes?.telefone,
-          erp_nome: licenca.erp_nome,
-          dias_restantes: dias,
-          data_validade: licenca.data_validade,
-          device_id: licenca.device_id
-        }
+        dias_restantes: dias
       });
     }
 
     const { data: pendente } = await supabaseRequest('GET', `solicitacoes?device_id=eq.${device_id}&select=*`);
     if (pendente.length > 0) return res.json({ status: 'pendente' });
 
-    await supabaseRequest('POST', 'solicitacoes', { device_id });
+    await supabaseRequest('POST', 'solicitacoes', {
+      device_id,
+      data: new Date().toISOString()
+    });
     return res.json({ status: 'pendente' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Verificação de licença com token
+// Verificação de licença (cliente)
 app.post('/licenca/verificar', async (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ error: 'token ausente' });
-
   try {
-    const { data } = await supabaseRequest('GET', `licencas?token=eq.${token}&autorizado=eq.true&select=*,clientes(*)`);
+    const { data } = await supabaseRequest('GET', `licencas?token=eq.${token}&autorizado=eq.true&select=*`);
     const licenca = data[0];
     if (!licenca) return res.status(404).json({ error: 'Licença inválida ou não autorizada' });
-
+    const hoje = new Date();
     const validade = new Date(licenca.data_validade);
-    const dias = Math.floor((validade - new Date()) / (1000 * 60 * 60 * 24));
-
+    const dias = Math.floor((validade - hoje) / (1000 * 60 * 60 * 24));
     res.json({
       dias_restantes: dias,
       data_validade: licenca.data_validade,
-      erp_nome: licenca.erp_nome,
-      payload: {
-        cliente_id: licenca.cliente_id,
-        nome_razao: licenca.clientes?.nome_razao,
-        telefone: licenca.clientes?.telefone,
-        erp_nome: licenca.erp_nome,
-        dias_restantes: dias,
-        data_validade: licenca.data_validade,
-        device_id: licenca.device_id
-      }
+      erp_nome: licenca.erp_nome
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -110,43 +91,35 @@ app.get('/admin/solicitacoes', async (req, res) => {
   }
 });
 
-// ✅ Aprovar solicitação (valida duplicidade de device_id)
+// Aprovar uma solicitação (admin)
 app.post('/admin/aprovar', async (req, res) => {
-  const { device_id, cliente_id, token, erp_nome, dias } = req.body;
-  if (!device_id || !cliente_id || !token || !erp_nome || !dias)
+  const { device_id, token, erp_nome, dias } = req.body;
+  if (!device_id || !token || !erp_nome || !dias)
     return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
 
+  const data_validade = new Date();
+  data_validade.setDate(data_validade.getDate() + parseInt(dias));
+  const validadeStr = data_validade.toISOString().split('T')[0];
+
   try {
-    // 🔒 Verifica se já existe device_id aprovado
-    const { data: existentes } = await supabaseRequest('GET', `licencas?device_id=eq.${device_id}&select=id`);
-    if (existentes.length > 0) {
-      return res.status(409).json({ error: 'Dispositivo já possui uma licença aprovada' });
-    }
-
-    const validade = new Date();
-    validade.setDate(validade.getDate() + parseInt(dias));
-    const validadeStr = validade.toISOString().split('T')[0];
-
     await supabaseRequest('POST', 'licencas', {
       device_id,
-      cliente_id,
       token,
       erp_nome,
       data_validade: validadeStr,
-      autorizado: true
+      autorizado: 1
     });
-
     await supabaseRequest('DELETE', `solicitacoes?device_id=eq.${device_id}`);
-    res.json({ status: 'Licença aprovada com sucesso', validade: validadeStr });
+    res.json({ status: 'Licença aprovada e registrada', validade: validadeStr });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Listar todas as licenças
+// Listar todas as licenças (admin)
 app.get('/admin/licencas', async (req, res) => {
   const status = req.query.status;
-  let query = 'licencas?select=*,clientes(*)';
+  let query = 'licencas?select=*';
   if (status === 'ativo') query += '&autorizado=eq.true';
   else if (status === 'inativo') query += '&autorizado=eq.false';
 
@@ -158,33 +131,39 @@ app.get('/admin/licencas', async (req, res) => {
   }
 });
 
-// Bloquear licença
+// Bloquear licença (admin)
 app.post('/admin/bloquear', async (req, res) => {
   const { token, device_id } = req.body;
+  if (!token && !device_id) return res.status(400).json({ error: 'Informe token ou device_id' });
+
   const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
   try {
-    await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: false });
+    await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: 0 });
     res.json({ status: 'Licença bloqueada com sucesso' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Reativar licença
+// Reativar licença (admin)
 app.post('/admin/reativar', async (req, res) => {
   const { token, device_id } = req.body;
+  if (!token && !device_id) return res.status(400).json({ error: 'Informe token ou device_id' });
+
   const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
   try {
-    await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: true });
+    await supabaseRequest('PATCH', `licencas?${filtro}`, { autorizado: 1 });
     res.json({ status: 'Licença reativada com sucesso' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Excluir licença
+// Excluir licença (admin)
 app.post('/admin/excluir-licenca', async (req, res) => {
   const { token, device_id } = req.body;
+  if (!token && !device_id) return res.status(400).json({ error: 'Informe token ou device_id' });
+
   const filtro = token ? `token=eq.${token}` : `device_id=eq.${device_id}`;
   try {
     await supabaseRequest('DELETE', `licencas?${filtro}`);
@@ -194,9 +173,10 @@ app.post('/admin/excluir-licenca', async (req, res) => {
   }
 });
 
-// Excluir solicitação
+// Excluir solicitação (admin)
 app.post('/admin/excluir-solicitacao', async (req, res) => {
   const { device_id } = req.body;
+
   try {
     if (device_id) {
       await supabaseRequest('DELETE', `solicitacoes?device_id=eq.${device_id}`);
