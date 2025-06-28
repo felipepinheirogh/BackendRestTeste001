@@ -12,9 +12,21 @@ export async function supabaseRequest(method, endpoint, body = null) {
       'Content-Type': 'application/json',
     },
   };
-  if (body) options.body = JSON.stringify(body);
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, options);
-  const data = await res.json();
+  if (body) {
+    options.body = JSON.stringify(body);
+  }
+
+  const url = `${SUPABASE_URL}/rest/v1/${endpoint}`;
+  const res = await fetch(url, options);
+  const text = await res.text();
+
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (err) {
+    throw new Error(`Erro ao parsear resposta JSON: ${err.message}\nResposta bruta: ${text}`);
+  }
+
   return { status: res.status, data };
 }
