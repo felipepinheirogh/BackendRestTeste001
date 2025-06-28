@@ -1,14 +1,23 @@
 {
-  "name": "servidor-licenciamento",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "body-parser": "^1.20.2",
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "node-fetch": "^2.6.7"
+    "name": "gestao360-licenciamento",
+    "version": "1.0.0",
+    "description": "Servidor de licenciamento modularizado para Gestão 360",
+    "main": "src/index.js",
+    "scripts": {
+      "start": "node src/index.js",
+      "dev": "nodemon src/index.js"
+    },
+    "author": "Seu Nome",
+    "license": "MIT",
+    "dependencies": {
+      "body-parser": "^1.20.2",
+      "cors": "^2.8.5",
+      "express": "^4.18.2",
+      "node-fetch": "^3.3.1"
+    },
+    "devDependencies": {
+      "nodemon": "^2.0.22"
+    },
+    "type": "module"
   }
-}
+  
