@@ -1,0 +1,18 @@
+import express from 'express';
+import { obterPerfil } from '../controllers/meController.js';
+
+const router = express.Router();
+
+router.get('/me', obterPerfil);
+
+export default router;
+
+
+// Teste no Postman
+// Método: GET
+
+// URL: http://localhost:3000/me
+
+// Header:
+
+// Authorization: Bearer <seu_token_jwt_aqui>
